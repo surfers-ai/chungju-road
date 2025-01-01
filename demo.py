@@ -1,10 +1,16 @@
-# demo_app.py
 import os
 import re
 
 import openai
 import streamlit as st
 from dotenv import load_dotenv
+
+from recommender import (
+    load_data,
+    create_item_similarity_matrix,
+    recommend_for_user,
+    get_items_info,
+)
 
 load_dotenv()
 
@@ -16,23 +22,26 @@ st.set_page_config(
 # OpenAI 클라이언트 설정
 openai_client = openai
 
-# 상수 정의
+# OpenAI API 키 & 어시스턴트 ID 설정
 ASSISTANT_ID = os.getenv("ASSISTANT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# OpenAI API 키 설정
 openai.api_key = OPENAI_API_KEY
 
-# --- Mock Data ---
-recommended_data = [
-    {"id": "CJU001", "title": "비내섬", "desc": "갈대와 물억새로 유명한 남한강 자연섬"},
-    {
-        "id": "CJU002",
-        "title": "충주호",
-        "desc": "국내 최대 규모의 인공호수, 내륙의 바다",
-    },
-    {"id": "CJU003", "title": "탄금호", "desc": "야경과 무지개길로 유명한 명소"},
-]
+# --- 추천 시스템 준비 ---
+ratings_df, travel_meta = load_data("rating_matrix.csv", "travel_metadata.json")
+item_sim_df = create_item_similarity_matrix(ratings_df)
+
+# (데모용) 세션에 user_id를 하나 고정한다고 가정
+demo_user_id = "U001"
+
+# ──────────────────────────────────────────────────────────────────
+# 0) 페이지 헤더
+# ──────────────────────────────────────────────────────────────────
+st.title("충주로드 - 당신만을 위한 AI 여행 친구")
+st.write("**AI 챗봇과 함께 충주 여행을 계획**해보세요!")
+
+# 메인 레이아웃: 1:2:1 비율
+col_left, col_center, col_right = st.columns([1, 2, 1])
 
 
 def initialize_session_state():
@@ -46,33 +55,32 @@ def initialize_session_state():
 
 initialize_session_state()
 
-
-# ──────────────────────────────────────────────────────────────────
-# 0) 페이지 헤더
-# ──────────────────────────────────────────────────────────────────
-st.title("충주로드 - 당신만을 위한 AI 여행 친구")
-st.write(
-    """
-**AI 챗봇과 함께 충주 여행을 계획**해보세요!
-"""
-)
-
-# 메인 레이아웃: 1:2:1 비율
-col_left, col_center, col_right = st.columns([1, 2, 1])
-
 # ---------------------------------------------
-# 1) 왼쪽 컬럼 - 추천 목록
+# 1) 왼쪽 컬럼 - 추천 목록 (협업필터링 활용)
 # ---------------------------------------------
 with col_left:
-    st.subheader("⛰️ 추천 여행지")
-    st.text("아직 가볼 곳을 결정하지 못했다면,\n아래 관광지를 확인해보세요!")
+    st.subheader("⛰️ 맞춤 추천 여행지")
+    st.caption(f"현재 데모 사용자: {demo_user_id}")
 
-    for rec in recommended_data:
-        with st.container():
-            st.image("chungju-image.png", width=120)  # 이미지 (임시)
-            st.markdown(f"**{rec['title']}**")
-            st.write(rec["desc"])
-            st.markdown("---")
+    # 협업 필터링으로 추천 아이템 가져오기
+    recommended_item_ids = recommend_for_user(
+        target_user_id=demo_user_id,
+        ratings_df=ratings_df,
+        item_similarity_df=item_sim_df,
+        top_n=3
+    )
+    recommended_items_info = get_items_info(recommended_item_ids, travel_meta)
+
+    if recommended_items_info:
+        for rec in recommended_items_info:
+            with st.container():
+                # 임의의 이미지
+                st.image("chungju-image.png", width=120)
+                st.markdown(f"**{rec['title']}**")
+                st.write(rec.get("description", "정보 없음"))
+                st.markdown("---")
+    else:
+        st.write("개인화 추천 결과가 없습니다.")
 
 # ---------------------------------------------
 # 2) 가운데 컬럼 - 채팅창
@@ -113,6 +121,7 @@ with col_center:
                     stream=True,
                 )
 
+                import re
                 placeholder = st.empty()
                 full_response = ""
                 for chunk in stream:
@@ -136,7 +145,6 @@ with col_center:
 # ---------------------------------------------
 # 3) 오른쪽 컬럼 - 광고(Mock)
 # ---------------------------------------------
-
 with col_right:
     st.subheader("📢 특별한 혜택")
     st.image("chungju-image.png", width=150)
